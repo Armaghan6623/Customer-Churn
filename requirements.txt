@@ -1,0 +1,19 @@
+flask
+gunicorn
+pandas
+scikit-learn
+xgboost
+lightgbm
+psycopg2-binary
+
+# Re-create buildspec.yml (This is the file Git missed)
+%%writefile buildspec.yml
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.9
+  build:
+    commands:
+      - echo Building Docker Image...
+      - docker build -t churn-app .
