@@ -1,16 +1,32 @@
 from flask import Flask, request, jsonify
 import pandas as pd
-# Import your logic here once created
-# from .db_handler import get_customer_data
-# from .prediction_service import predict_churn
+import pickle
+import os
 
 app = Flask(__name__)
+MODEL_PATH = 'models/churn_model.pkl'
+
+# Load model at startup
+if os.path.exists(MODEL_PATH):
+    with open(MODEL_PATH, 'rb') as f:
+        model = pickle.load(f)
+else:
+    model = None
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    # This will eventually connect to RDS and the ML model
+    if not model:
+        return jsonify({"error": "Model not loaded"}), 500
+    
     data = request.get_json()
-    return jsonify({"message": "Prediction endpoint reached", "input": data})
+    input_df = pd.DataFrame([data])
+    
+    # Simple prediction
+    prediction = model.predict(input_df)
+    return jsonify({
+        "churn_prediction": int(prediction[0]),
+        "status": "Success"
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
