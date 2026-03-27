@@ -6,7 +6,7 @@ xgboost
 lightgbm
 psycopg2-binary
 
-#  Create the Buildspec (The 'CI/CD Instructions' for Git)
+# Re-create buildspec.yml (This is the file Git missed)
 %%writefile buildspec.yml
 version: 0.2
 phases:
