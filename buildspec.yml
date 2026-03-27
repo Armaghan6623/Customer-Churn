@@ -1,0 +1,14 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.9
+  build:
+    commands:
+      - echo Building Docker Image...
+      - docker build -t churn-app .
+
+# Add, commit, and push it
+!git add buildspec.yml
+!git commit -m "feat: add buildspec.yml for AWS pipeline"
+!git push origin main
