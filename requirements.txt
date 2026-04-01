@@ -16,4 +16,4 @@ phases:
   build:
     commands:
       - echo Building Docker Image...
-      - docker build -t churn-app 
+      - docker build -t churn-app
