@@ -8,7 +8,10 @@ phases:
       - echo Building Docker Image...
       - docker build -t churn-app .
 
-# Add, commit, and push it
-!git add buildspec.yml
-!git commit -m "feat: add buildspec.yml for AWS pipeline"
+# 3. Create a placeholder file so the models folder shows up
+!touch models/.gitkeep
+
+# 4. The Strict Git Routine: Add, Commit, and Push
+!git add buildspec.yml models/
+!git commit -m "feat: add buildspec for AWS and models directory placeholder"
 !git push origin main
