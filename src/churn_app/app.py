@@ -17,10 +17,10 @@ else:
 def predict():
     if not model:
         return jsonify({"error": "Model not loaded"}), 500
-    
+
     data = request.get_json()
     input_df = pd.DataFrame([data])
-    
+
     # Simple prediction
     prediction = model.predict(input_df)
     return jsonify({
