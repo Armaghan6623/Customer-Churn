@@ -1,14 +1,18 @@
 version: 0.2
 phases:
-  install:
-    runtime-versions:
-      python: 3.9
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
   build:
     commands:
-      - echo Building Docker Image...
+      - echo Building the Docker image...
       - docker build -t churn-app .
-
-# Add, commit, and push it
-!git add buildspec.yml
-!git commit -m "feat: add buildspec.yml for AWS pipeline"
-!git push origin main
+      - docker tag churn-app:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/churn-app-repo:latest
+  post_build:
+    commands:
+      - echo Pushing the Docker image...
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/churn-app-repo:latest
+      - printf '[{"name":"churn-container","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/churn-app-repo:latest > imagedefinitions.json
+artifacts:
+  files: imagedefinitions.json
