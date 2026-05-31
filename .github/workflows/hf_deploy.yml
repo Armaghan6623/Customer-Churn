@@ -2,7 +2,7 @@ name: Production Deployment Pipeline to Hugging Face Spaces
 
 on:
   push:
-    branches: [ master ]  # Triggers automatically when you push to master
+    branches: [ master ]
 
 jobs:
   deploy-to-space:
@@ -13,15 +13,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Mount Production Git Synchronizer Configurations
+      - name: Deploy Sub-Folder Directly to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_SPACE_DEPLOY_TOKEN }}
         run: |
+          # 1. Initialize global git configs inside the runner
           git config --global user.email "actions@github.com"
           git config --global user.name "Automated-GitHub-Actions-Runner"
           
-          # Links your workflow runner directly to your live Hugging Face Space
-          git remote add space https://huggingface.co/spaces/Armaghan6623/customer-churn-mlops
+          # 2. Step completely inside your app directory
+          cd customer_churn_saas
           
-          # Pushes the 'customer_churn_saas' subfolder directly as the root of your Hugging Face Space
-          git subtree push --prefix customer_churn_saas space main
+          # 3. Initialize a clean, independent git instance for Hugging Face
+          git init -b main
+          git add .
+          git commit -m "production: deploy autonomous level-2 platform"
+          
+          # 4. Force push directly over to your target Space
+          # (Ensure 'Armaghan6623' matches your exact Hugging Face profile username capitalization)
+          git remote add space https://Armaghan6623:$HF_TOKEN@huggingface.co/spaces/Armaghan6623/customer-churn-mlops
+          git push --force space main
