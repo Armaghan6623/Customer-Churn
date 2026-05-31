@@ -53,4 +53,3 @@ class ChurnSaaSModel:
             "xgb": xgb_df,
             "plot_path": out_path,
         }
-

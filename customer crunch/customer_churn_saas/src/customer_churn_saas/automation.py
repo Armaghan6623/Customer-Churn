@@ -27,4 +27,3 @@ def ks_test_drift(old_values, new_values) -> Dict[str, Any]:
         "p_value": float(res.pvalue),
         "drift_detected": bool(res.pvalue < 0.05),
     }
-

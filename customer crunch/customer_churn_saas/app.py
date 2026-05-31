@@ -25,12 +25,26 @@ def run():
         age = st.slider("Customer Age (Years)", 18, 92, 40, step=1)
 
         tenure = st.slider("Tenure Window (Years with Bank)", 0, 10, 5, step=1)
-        balance = st.number_input("Liquid Account Balance ($)", min_value=0.0, max_value=250000.0, value=75000.0, step=500.0)
+        balance = st.number_input(
+            "Liquid Account Balance ($)",
+            min_value=0.0,
+            max_value=250000.0,
+            value=75000.0,
+            step=500.0,
+        )
         num_products = st.slider("Active Financial Products", 1, 4, 2, step=1)
 
         has_credit_card = st.radio("Holds Credit Card?", ["Yes", "No"])
-        is_active_member = st.radio("Maintains Active Engagement Status?", ["Yes", "No"])
-        estimated_salary = st.number_input("Estimated Annual Income ($)", min_value=0.0, max_value=200000.0, value=100000.0, step=1000.0)
+        is_active_member = st.radio(
+            "Maintains Active Engagement Status?", ["Yes", "No"]
+        )
+        estimated_salary = st.number_input(
+            "Estimated Annual Income ($)",
+            min_value=0.0,
+            max_value=200000.0,
+            value=100000.0,
+            step=1000.0,
+        )
 
         payload = {
             "CreditScore": credit_score,
@@ -67,9 +81,12 @@ def run():
             st.subheader("XGBoost Forecast")
             st.dataframe(out["xgb"], use_container_width=True)
 
-            st.image(out["plot_path"], caption="SARIMAX vs XGBoost forecasts", use_container_width=True)
+            st.image(
+                out["plot_path"],
+                caption="SARIMAX vs XGBoost forecasts",
+                use_container_width=True,
+            )
 
 
 if __name__ == "__main__":
     run()
-

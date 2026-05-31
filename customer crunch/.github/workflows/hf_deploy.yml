@@ -1,0 +1,23 @@
+name: Deploy Streamlit app to Hugging Face Spaces
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload customer_churn_saas to Space
+        uses: Custom-Ink/huggingface-spaces-upload-action@v2
+        with:
+          hf_username: "Armaghan6623"
+          space_name: "customer-churn-mlops"
+          hf_access_token: ${{ secrets.HF_SPACE_DEPLOY_TOKEN }}
+          source_directory: "customer_churn_saas"
+
