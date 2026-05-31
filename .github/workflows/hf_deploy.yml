@@ -1,0 +1,102 @@
+name: hf_deploy
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install deps
+        run: |
+          cd customer_churn_saas
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Smoke import
+        run: |
+          cd customer_churn_saas
+          python -c "from customer_churn_saas.model import ChurnSaaSModel; print('import_ok')"
+
+      - name: Prepare model/plot artifacts
+        run: |
+          mkdir -p customer_churn_saas/saved_models
+          # Best-effort: include any pre-existing artifacts from the repo.
+          # If missing, the pipeline will still run but the UI may regenerate.
+          if [ -f saved_models/churn_pipeline.joblib ]; then cp saved_models/churn_pipeline.joblib customer_churn_saas/saved_models/ || true; fi
+          if [ -f saved_models/forecast_model.joblib ]; then cp saved_models/forecast_model.joblib customer_churn_saas/saved_models/ || true; fi
+          if [ -f saved_models/xgb_forecast_model.joblib ]; then cp saved_models/xgb_forecast_model.joblib customer_churn_saas/saved_models/ || true; fi
+          if [ -f saved_models/forecast_plot.png ]; then cp saved_models/forecast_plot.png customer_churn_saas/saved_models/ || true; fi
+
+      - name: Build Space (Gradio) files
+        run: |
+          # Minimal Dockerless Space via static entrypoint is not enough for Streamlit.
+          # We package the repo as a HF Space using Dockerfile.
+          cat > customer_churn_saas/Dockerfile << 'EOF'
+          FROM python:3.10-slim
+
+          WORKDIR /app
+          COPY . /app
+
+          RUN pip install --no-cache-dir --upgrade pip \
+              && pip install --no-cache-dir -r customer_churn_saas/requirements.txt
+
+          # Ensure Python can find src/
+          ENV PYTHONPATH="/app/customer_churn_saas/src"
+
+          EXPOSE 8501
+
+          # Streamlit expects to run from the folder containing app.py
+          CMD ["bash", "-lc", "cd customer_churn_saas && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"]
+          EOF
+
+      - name: Deploy to Hugging Face Hub (Space)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install -q huggingface_hub
+
+          python - << 'PY'
+          import os
+          from huggingface_hub import HfApi, HfFolder
+
+          token = os.environ.get('HF_TOKEN')
+          repo_id = os.environ.get('HF_REPO_ID')
+          if not repo_id:
+              raise SystemExit('Missing HF_REPO_ID secret')
+          if not token:
+              raise SystemExit('Missing HF_TOKEN secret')
+
+          HfFolder.save_token(token)
+          api = HfApi()
+
+          # Create/update Space. This pushes a Git-like snapshot of the repository.
+          # We upload the whole repo so the Dockerfile + app.py are available.
+          # Note: HF uses a Space configuration from Dockerfile at repo root.
+          api.create_repo(repo_id=repo_id, repo_type='space', exist_ok=True)
+
+          from huggingface_hub import upload_folder
+          upload_folder(
+              folder_path='.',
+              repo_id=repo_id,
+              repo_type='space',
+              path_in_repo='.',
+              commit_message='CI: deploy customer_churn_saas Space',
+          )
+          print('Deployment complete:', repo_id)
+          PY
+
