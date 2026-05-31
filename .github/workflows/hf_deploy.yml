@@ -16,7 +16,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -51,10 +51,37 @@ jobs:
           find "${APP_DIR}" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
           find "${APP_DIR}" -name "*.pyc" -delete 2>/dev/null || true
 
-      - name: Upload app subtree to Hugging Face Space
-        uses: Custom-Ink/huggingface-spaces-upload-action@v2
-        with:
-          hf_username: "MuhammadArmaghan"
-          space_name: "customer-crunch"
-          hf_access_token: ${{ secrets.HF_SPACE_DEPLOY_TOKEN }}
-          source_directory: "customer crunch/customer_churn_saas"
+      - name: Upload bundle to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_SPACE_DEPLOY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -q "huggingface_hub[cli]"
+
+          python << 'PY'
+          import os
+          from huggingface_hub import HfApi, upload_folder
+
+          token = os.environ["HF_TOKEN"]
+          repo_id = "MuhammadArmaghan/customer-crunch"
+          folder = "customer crunch/customer_churn_saas"
+
+          api = HfApi(token=token)
+          api.create_repo(
+              repo_id=repo_id,
+              repo_type="space",
+              space_sdk="docker",
+              exist_ok=True,
+          )
+
+          upload_folder(
+              folder_path=folder,
+              repo_id=repo_id,
+              repo_type="space",
+              token=token,
+              commit_message="Deploy Docker Streamlit app from GitHub Actions",
+              delete_patterns=["*"],
+          )
+          print(f"Deployed to https://huggingface.co/spaces/{repo_id}")
+          PY
