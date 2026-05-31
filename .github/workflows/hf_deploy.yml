@@ -1,4 +1,4 @@
-name: Deploy Streamlit app to Hugging Face Spaces
+name: Deploy Docker Streamlit app to Hugging Face Spaces
 
 on:
   push:
@@ -50,7 +50,6 @@ jobs:
 
           find "${APP_DIR}" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
           find "${APP_DIR}" -name "*.pyc" -delete 2>/dev/null || true
-          rm -f "${APP_DIR}/Dockerfile" "${APP_DIR}/app.sh" 2>/dev/null || true
 
       - name: Upload app subtree to Hugging Face Space
         uses: Custom-Ink/huggingface-spaces-upload-action@v2
