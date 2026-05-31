@@ -1,0 +1,54 @@
+name: Deploy Streamlit app to Hugging Face Spaces
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "customer crunch/customer_churn_saas/**"
+      - ".github/workflows/hf_deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: hf-space-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Stage model artifacts for Space runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_DIR="customer crunch/customer_churn_saas"
+          mkdir -p "${APP_DIR}/saved_models"
+
+          for artifact in \
+            churn_pipeline.joblib \
+            forecast_model.joblib \
+            xgb_forecast_model.joblib \
+            forecast_plot.png
+          do
+            src="customer crunch/saved_models/${artifact}"
+            dst="${APP_DIR}/saved_models/${artifact}"
+            if [ -f "${src}" ]; then
+              cp "${src}" "${dst}"
+              echo "Copied ${src} -> ${dst}"
+            else
+              echo "Optional artifact missing (skipped): ${src}"
+            fi
+          done
+
+      - name: Upload app subtree to Hugging Face Space
+        uses: Custom-Ink/huggingface-spaces-upload-action@v2
+        with:
+          hf_username: "Armaghan6623"
+          space_name: "customer-churn-mlops"
+          hf_access_token: ${{ secrets.HF_SPACE_DEPLOY_TOKEN }}
+          source_directory: "customer crunch/customer_churn_saas"
