@@ -40,12 +40,10 @@ def _load_series(data_path: str, target_col: str = "ChurnCount") -> pd.Series:
 
 
 def _sarima_artifact_forecast(artifact_path: str, steps: int = 6) -> pd.Series:
-    payload = joblib.load(artifact_path)
-    last_date = payload["history_last_index"]
-    history_series = payload["history_last_values"]
-
-    # Recreate results container
+    from forecasting.model import load_sarima_payload
     from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+    params, history_series, last_date = load_sarima_payload(artifact_path)
 
     model = SARIMAX(
         history_series,
@@ -54,7 +52,7 @@ def _sarima_artifact_forecast(artifact_path: str, steps: int = 6) -> pd.Series:
         enforce_stationarity=False,
         enforce_invertibility=False,
     )
-    results = model.smooth(payload["results_param"])
+    results = model.smooth(params)
     forecast_res = results.get_forecast(steps=steps)
 
     future_dates = pd.date_range(

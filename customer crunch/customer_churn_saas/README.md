@@ -1,5 +1,5 @@
 ---
-title: Customer Churn MLOps
+title: Customer Churn Prediction API
 emoji: 📊
 colorFrom: blue
 colorTo: indigo

@@ -16,6 +16,36 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.
 warnings.filterwarnings("ignore")  # Suppress technical convergence optimization warnings
 
 
+def portable_sarima_payload(final_results, series):
+    """Serialize SARIMA state using plain Python types (pandas-version safe)."""
+    tail = series[-24:]
+    return {
+        "results_param": final_results.params.to_dict(),
+        "history_last_index": series.index[-1].isoformat(),
+        "history_last_values": tail.astype(float).tolist(),
+        "history_index": [d.isoformat() for d in tail.index],
+    }
+
+
+def load_sarima_payload(artifact_path):
+    """Load SARIMA artifact saved in portable or legacy layout."""
+    payload = joblib.load(artifact_path)
+
+    if isinstance(payload.get("results_param"), dict):
+        params = pd.Series(payload["results_param"])
+        history_series = pd.Series(
+            payload["history_last_values"],
+            index=pd.to_datetime(payload["history_index"]),
+        )
+        last_date = pd.Timestamp(payload["history_last_index"])
+        return params, history_series, last_date
+
+    params = payload["results_param"]
+    history_series = payload["history_last_values"]
+    last_date = payload["history_last_index"]
+    return params, history_series, last_date
+
+
 class ChurnSARIMAForecaster:
     def __init__(self, model_dir="saved_models"):
         self.model_dir = model_dir
@@ -110,14 +140,7 @@ class ChurnSARIMAForecaster:
         )
         final_results = final_model.fit(disp=False)
 
-        # Serialize entire wrapper dictionary using joblib binary protocol
-        payload = {
-            "specification": final_model,
-            "results_param": final_results.params,
-            "history_last_index": series.index[-1],
-            "history_last_values": series[-24:],  # Preserve tail data to form forecasting anchors
-        }
-
+        payload = portable_sarima_payload(final_results, series)
         joblib.dump(payload, self.model_path)
         print(f"💾 SARIMA Model artifact successfully serialized to: {self.model_path}")
 
@@ -129,11 +152,8 @@ class ChurnSARIMAForecaster:
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"❌ Forecast artifact missing at '{self.model_path}'. Execute training first!")
 
-        payload = joblib.load(self.model_path)
-        last_date = payload["history_last_index"]
-        history_series = payload["history_last_values"]
+        params, history_series, last_date = load_sarima_payload(self.model_path)
 
-        # Instantiate model structure onto saved state parameters
         model = SARIMAX(
             history_series,
             order=(1, 1, 1),
@@ -141,7 +161,7 @@ class ChurnSARIMAForecaster:
             enforce_stationarity=False,
             enforce_invertibility=False,
         )
-        results = model.smooth(payload["results_param"])
+        results = model.smooth(params)
 
         # Predict out-of-sample forecast steps
         forecast_res = results.get_forecast(steps=steps)
