@@ -1,0 +1,44 @@
+name: MLOps Drift Check
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pandas scipy scikit-learn xgboost joblib
+
+      - name: Run drift monitor
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+
+          root = os.path.join("customer crunch")
+          sys.path.insert(0, root)
+          os.chdir(root)
+
+          from agent.mlops_agent import MLOpsAgent
+
+          model = "saved_models/churn_pipeline.joblib"
+          if not os.path.exists(model):
+              print("No model artifact; skipping drift check.")
+              raise SystemExit(0)
+
+          agent = MLOpsAgent(model_path=model)
+          report = agent.run_drift_scan(simulate_drift=False)
+          print(agent.format_drift_report(report))
+          if report.get("drift_features"):
+              print("::warning::Data drift detected:", report["drift_features"])
+          PY

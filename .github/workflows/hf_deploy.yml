@@ -1,87 +1,61 @@
-name: Deploy Docker Streamlit app to Hugging Face Spaces
+name: Deploy to Hugging Face Spaces
 
 on:
   push:
     branches:
       - main
-    paths:
-      - "customer crunch/**"
-      - ".github/workflows/hf_deploy.yml"
   workflow_dispatch:
-
-concurrency:
-  group: hf-space-deploy-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Stage Space bundle (app + ML modules + artifacts)
-        shell: bash
-        run: |
-          set -euo pipefail
-          APP_DIR="customer crunch/customer_churn_saas"
-          mkdir -p "${APP_DIR}/saved_models"
+      - name: Build Docker image (sanity check)
+        run: docker build -t hf-space:latest .
 
-          for artifact in \
-            churn_pipeline.joblib \
-            forecast_model.joblib \
-            xgb_forecast_model.joblib \
-            forecast_plot.png
-          do
-            src="customer crunch/saved_models/${artifact}"
-            dst="${APP_DIR}/saved_models/${artifact}"
-            if [ -f "${src}" ]; then
-              cp "${src}" "${dst}"
-              echo "Copied ${src} -> ${dst}"
-            fi
-          done
-
-          cp -r "customer crunch/classification" "${APP_DIR}/"
-          cp -r "customer crunch/forecasting" "${APP_DIR}/"
-          cp "customer crunch/monthly_churn_trends.csv" "${APP_DIR}/" 2>/dev/null \
-            || cp "customer crunch/data/raw/monthly_churn_trends.csv" "${APP_DIR}/monthly_churn_trends.csv"
-
-          find "${APP_DIR}" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-          find "${APP_DIR}" -name "*.pyc" -delete 2>/dev/null || true
-
-      - name: Upload bundle to Hugging Face Space
+      - name: Restart Space (rebuild with latest repo)
         env:
           HF_TOKEN: ${{ secrets.HF_SPACE_DEPLOY_TOKEN }}
-        shell: bash
+          SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          SPACE_ID_SECRET: ${{ secrets.HF_SPACE_ID }}
         run: |
-          set -euo pipefail
-          pip install -q "huggingface_hub[cli]"
-
-          python << 'PY'
+          python - <<'PY'
           import os
-          from huggingface_hub import HfApi, upload_folder
+          import sys
+          from urllib.error import HTTPError
+          from urllib.parse import quote
+          from urllib.request import Request, urlopen
 
-          token = os.environ["HF_TOKEN"]
-          repo_id = "MuhammadArmaghan/customer-crunch"
-          folder = "customer crunch/customer_churn_saas"
+          token = os.environ.get("HF_TOKEN")
+          space_id = (os.environ.get("SPACE_ID") or os.environ.get("SPACE_ID_SECRET") or "").strip()
 
-          api = HfApi(token=token)
-          api.create_repo(
-              repo_id=repo_id,
-              repo_type="space",
-              space_sdk="docker",
-              exist_ok=True,
+          if not token:
+              print("Missing secret HF_SPACE_DEPLOY_TOKEN", file=sys.stderr)
+              sys.exit(1)
+          if not space_id:
+              print(
+                  "Missing HF Space id. Set repository variable HF_SPACE_ID "
+                  "or secret HF_SPACE_ID (e.g. your-username/customer-churn).",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          encoded = quote(space_id, safe="/")
+          url = f"https://huggingface.co/api/spaces/{encoded}/restart"
+          req = Request(
+              url,
+              method="POST",
+              headers={"Authorization": f"Bearer {token}"},
           )
 
-          upload_folder(
-              folder_path=folder,
-              repo_id=repo_id,
-              repo_type="space",
-              token=token,
-              commit_message="Deploy Docker Streamlit app from GitHub Actions",
-              delete_patterns=["*"],
-          )
-          print(f"Deployed to https://huggingface.co/spaces/{repo_id}")
+          try:
+              with urlopen(req, timeout=60) as resp:
+                  print(f"Space restart triggered for {space_id}: HTTP {resp.status}")
+          except HTTPError as e:
+              body = e.read().decode("utf-8", errors="replace")
+              print(f"Restart failed: HTTP {e.code} {body}", file=sys.stderr)
+              sys.exit(1)
           PY

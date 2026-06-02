@@ -5,8 +5,8 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
-# Resolve monorepo root (local) vs Space root (HF deploy bundle).
-_APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# Resolve monorepo root — model.py now lives directly in customer_churn_saas/
+_APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 def _resolve_crunch_root() -> str:

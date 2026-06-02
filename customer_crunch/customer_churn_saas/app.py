@@ -1,12 +1,14 @@
 import os
 import sys
 
-# Ensure local package import works when running `python app.py` / streamlit run
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+# Add parent so classification/forecasting/agent modules resolve
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Add this folder so local modules (model.py, preprocessing.py) resolve
+sys.path.insert(0, os.path.dirname(__file__))
 
 import streamlit as st
 
-from customer_churn_saas.model import ChurnSaaSModel
+from model import ChurnSaaSModel
 
 
 def run():

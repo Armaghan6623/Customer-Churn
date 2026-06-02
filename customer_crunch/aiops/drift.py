@@ -91,9 +91,15 @@ from scipy.stats import ks_2samp
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
 class DataDriftMonitor:
-    def __init__(self, reference_data_path="漏hurn_Modelling kaggel.csv"):
+    def __init__(
+        self,
+        reference_data_path: str = "Churn_Modelling kaggel.csv",
+        numeric_features: list = None,
+    ):
         self.reference_data_path = reference_data_path
-        
+        # When None, features are inferred from the reference data at runtime
+        self._numeric_features = numeric_features
+
     def load_reference_data(self):
         """Loads the baseline data the model originally trained on."""
         if not os.path.exists(self.reference_data_path):
@@ -104,10 +110,22 @@ class DataDriftMonitor:
         """
         Executes a Two-Sample Kolmogorov-Smirnov Test on numerical features
         to mathematically detect distribution anomalies.
+
+        The feature list is taken from the constructor argument when provided;
+        otherwise all numeric columns shared between reference and current data
+        are used automatically.
         """
         ref_df = self.load_reference_data()
-        
-        numerical_features = ['CreditScore', 'Age', 'Tenure', 'Balance', 'EstimatedSalary']
+
+        if self._numeric_features:
+            numerical_features = self._numeric_features
+        else:
+            # Auto-detect: numeric columns present in both dataframes
+            numerical_features = [
+                c for c in ref_df.select_dtypes(include="number").columns
+                if c in current_data_df.columns
+            ]
+
         drift_report = {}
         drift_detected_global = False
         

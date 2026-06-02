@@ -1,0 +1,537 @@
+import os
+import sys
+import joblib
+import io
+import pandas as pd
+import numpy as np
+import gradio as gr
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import shap
+
+# Ensure package imports (classification, agent, aiops) resolve.
+_PKG_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PKG_ROOT not in sys.path:
+    sys.path.insert(0, _PKG_ROOT)
+
+_CRUNCH_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+
+
+def _get_model_artifact_path() -> str:
+    """Return the path to the churn pipeline joblib artifact."""
+    candidate_paths = [
+        os.path.join(_CRUNCH_ROOT, "customer_crunch", "saved_models", "churn_pipeline.joblib"),
+        os.path.join(_CRUNCH_ROOT, "customer crunch", "saved_models", "churn_pipeline.joblib"),
+        os.path.join(_CRUNCH_ROOT, "saved_models", "churn_pipeline.joblib"),
+        os.path.join(os.getcwd(), "saved_models", "churn_pipeline.joblib"),
+        os.path.join(os.getcwd(), "customer_crunch", "saved_models", "churn_pipeline.joblib"),
+        os.path.join(os.getcwd(), "customer crunch", "saved_models", "churn_pipeline.joblib"),
+    ]
+    for p in candidate_paths:
+        if os.path.exists(p):
+            return p
+
+    # Fallback for HF Docker where CWD is usually /app
+    return os.path.join("saved_models", "churn_pipeline.joblib")
+
+
+def _load_pipeline(model_path: str):
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Model artifact not found: {model_path}. "
+            "Expected churn_pipeline.joblib under saved_models/."
+        )
+    return joblib.load(model_path)
+
+
+# Load once at import time so Gradio requests are fast.
+MODEL_PATH = os.environ.get("CHURN_PIPELINE_PATH", _get_model_artifact_path())
+PIPELINE = None
+PIPELINE_LOAD_ERROR = None
+try:
+    PIPELINE = _load_pipeline(MODEL_PATH)
+except Exception as e:  # pragma: no cover
+    PIPELINE_LOAD_ERROR = e
+
+
+REQUIRED_COLUMNS = [
+    "CreditScore",
+    "Geography",
+    "Gender",
+    "Age",
+    "Tenure",
+    "Balance",
+    "NumOfProducts",
+    "HasCrCard",
+    "IsActiveMember",
+    "EstimatedSalary",
+]
+
+
+# ---------------------------------------------------------------------------
+# SHAP helpers
+# ---------------------------------------------------------------------------
+
+_SHAP_EXPLAINER = None
+_SHAP_PREPROCESSOR = None
+_SHAP_FEATURE_NAMES = None
+
+
+def _init_shap():
+    """Build SHAP explainer once from the loaded pipeline."""
+    global _SHAP_EXPLAINER, _SHAP_PREPROCESSOR, _SHAP_FEATURE_NAMES
+    if _SHAP_EXPLAINER is not None:
+        return True, None
+    if PIPELINE is None:
+        return False, str(PIPELINE_LOAD_ERROR)
+    try:
+        artifact = PIPELINE if not isinstance(PIPELINE, dict) else PIPELINE
+        pipeline = artifact["pipeline"] if isinstance(artifact, dict) else artifact
+        preprocessor = pipeline.named_steps["preprocessor"]
+        xgb_model = pipeline.named_steps["classifier"]
+        num_features = [
+            "CreditScore", "Age", "Tenure", "Balance",
+            "NumOfProducts", "HasCrCard", "IsActiveMember", "EstimatedSalary",
+        ]
+        cat_encoder = preprocessor.named_transformers_["cat"]
+        enc_cats = cat_encoder.get_feature_names_out(["Geography", "Gender"]).tolist()
+        _SHAP_FEATURE_NAMES = num_features + enc_cats
+        _SHAP_PREPROCESSOR = preprocessor
+        _SHAP_EXPLAINER = shap.TreeExplainer(xgb_model)
+        return True, None
+    except Exception as ex:
+        return False, str(ex)
+
+
+def _compute_shap(payload: dict):
+    """Return (shap_values, feature_names, base_value, churn_prob) or raise."""
+    ok, err = _init_shap()
+    if not ok:
+        raise RuntimeError(err)
+    df = pd.DataFrame([payload])
+    pipeline = PIPELINE["pipeline"] if isinstance(PIPELINE, dict) else PIPELINE
+    X_t = _SHAP_PREPROCESSOR.transform(df)
+    sv = _SHAP_EXPLAINER.shap_values(X_t)[0]
+    base = float(_SHAP_EXPLAINER.expected_value)
+    prob = float(pipeline.predict_proba(df)[0][1])
+    return sv, _SHAP_FEATURE_NAMES, base, prob
+
+
+def _shap_waterfall_image(sv, names, base, prob):
+    """Return PIL Image for the signed SHAP bar chart."""
+    from PIL import Image as PILImage
+    pairs = sorted(zip(sv, names), key=lambda x: abs(x[0]), reverse=True)[:10]
+    vals = [p[0] for p in pairs]
+    lbls = [p[1] for p in pairs]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    colors = ["#d62728" if v >= 0 else "#2ca02c" for v in vals]
+    ax.barh(range(len(vals)), vals[::-1], color=colors[::-1])
+    ax.set_yticks(range(len(vals)))
+    ax.set_yticklabels(lbls[::-1], fontsize=10)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("SHAP value  (+  toward churn  |  −  away from churn)")
+    ax.set_title(f"Top 10 Feature Impacts  (churn prob = {prob*100:.1f}%,  base = {base:.3f})")
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return PILImage.open(buf)
+
+
+def _shap_importance_image(sv, names):
+    """Return PIL Image for the |SHAP| importance chart."""
+    from PIL import Image as PILImage
+    pairs = sorted(zip(np.abs(sv), names), key=lambda x: x[0], reverse=True)[:10]
+    vals = [p[0] for p in pairs]
+    lbls = [p[1] for p in pairs]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.barh(range(len(vals)), vals[::-1], color="#1f77b4")
+    ax.set_yticks(range(len(vals)))
+    ax.set_yticklabels(lbls[::-1], fontsize=10)
+    ax.set_xlabel("|SHAP value|  —  feature importance for this prediction")
+    ax.set_title("Feature Importance (this customer)")
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return PILImage.open(buf)
+
+
+def _validate_and_build_df(payload: dict) -> pd.DataFrame:
+    df = pd.DataFrame([payload])
+
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required input fields: {missing}")
+
+    # Lightweight boundary guardrails
+    age = float(df["Age"].iloc[0])
+    credit_score = float(df["CreditScore"].iloc[0])
+    if not (0 <= age <= 120):
+        raise ValueError(f"Age must be between 0 and 120. Got: {age}")
+    if not (0 <= credit_score <= 850):
+        raise ValueError(f"CreditScore must be between 0 and 850. Got: {credit_score}")
+
+    return df
+
+
+def predict_customer_churn(
+    tenure: float,
+    monthly_charges: float,  # UI placeholder
+    contract_type: str,  # UI placeholder
+    payment_method: str,  # UI placeholder
+    paperless_billing: str,  # UI placeholder
+    total_charges: float,  # UI placeholder
+    internet_service: str,  # UI placeholder
+    tech_support: str,  # UI placeholder
+    online_backup: str,  # UI placeholder
+    device_protection: str,  # UI placeholder
+    streaming_tv: str,  # UI placeholder
+    streaming_movies: str,  # UI placeholder
+    gender: str,
+    geography: str,
+    credit_score: float,
+    age: float,
+    balance: float,
+    num_products: float,
+    has_credit_card: str,
+    is_active_member: str,
+    estimated_salary: float,
+):
+    """Predict churn risk for a single customer."""
+
+    if PIPELINE_LOAD_ERROR is not None or PIPELINE is None:
+        return (
+            "Model failed to load.",
+            "0.00%",
+            f"{PIPELINE_LOAD_ERROR}",
+        )
+
+    payload = {
+        "CreditScore": float(credit_score),
+        "Geography": str(geography),
+        "Gender": str(gender),
+        "Age": float(age),
+        "Tenure": float(tenure),
+        "Balance": float(balance),
+        "NumOfProducts": int(num_products),
+        "HasCrCard": 1 if has_credit_card == "Yes" else 0,
+        "IsActiveMember": 1 if is_active_member == "Yes" else 0,
+        "EstimatedSalary": float(estimated_salary),
+    }
+
+    df = _validate_and_build_df(payload)
+
+    # Handle both new dict artifact format {"pipeline": ..., "config": ...} and legacy raw pipeline
+    _pipeline = PIPELINE["pipeline"] if isinstance(PIPELINE, dict) else PIPELINE
+
+    probability = float(_pipeline.predict_proba(df)[0][1])  # churn prob (class 1)
+    prediction = int(_pipeline.predict(df)[0])
+
+    status = "High Risk" if prediction == 1 else "Low Risk"
+    prob_str = f"{probability * 100:.2f}%"
+    return (status, prob_str, "")
+
+
+def explain_customer_shap(
+    gender: str,
+    geography: str,
+    credit_score: float,
+    age: float,
+    balance: float,
+    num_products: float,
+    has_credit_card: str,
+    is_active_member: str,
+    estimated_salary: float,
+    tenure: float,
+):
+    """Compute live SHAP explanation for a single customer."""
+    payload = {
+        "CreditScore": float(credit_score),
+        "Geography": str(geography),
+        "Gender": str(gender),
+        "Age": float(age),
+        "Tenure": float(tenure),
+        "Balance": float(balance),
+        "NumOfProducts": int(num_products),
+        "HasCrCard": 1 if has_credit_card == "Yes" else 0,
+        "IsActiveMember": 1 if is_active_member == "Yes" else 0,
+        "EstimatedSalary": float(estimated_salary),
+    }
+
+    try:
+        sv, names, base, prob = _compute_shap(payload)
+    except Exception as ex:
+        empty = plt.figure()
+        plt.close(empty)
+        return None, None, f"SHAP error: {ex}", ""
+
+    # Build impact table
+    pairs = sorted(zip(sv, names), key=lambda x: abs(x[0]), reverse=True)[:10]
+    table_md = "| Feature | SHAP Value | Direction |\n|---|---:|---:|\n"
+    for n, v in pairs:
+        direction = "↑ toward churn" if v > 0 else "↓ away from churn"
+        table_md += f"| {n} | {v:+.4f} | {direction} |\n"
+
+    # Plain-language summary
+    top_pos = [(n, v) for n, v in pairs if v > 0][:3]
+    top_neg = [(n, v) for n, v in pairs if v < 0][:3]
+    summary_lines = [f"**Churn probability: {prob*100:.2f}%** (model base rate: {base*100:.2f}%)\n"]
+    if top_pos:
+        drivers = ", ".join(f"**{n}** (+{v:.3f})" for n, v in top_pos)
+        summary_lines.append(f"- Factors **increasing** churn risk: {drivers}")
+    if top_neg:
+        guards = ", ".join(f"**{n}** ({v:.3f})" for n, v in top_neg)
+        summary_lines.append(f"- Factors **reducing** churn risk: {guards}")
+    summary = "\n".join(summary_lines)
+
+    waterfall_buf = _shap_waterfall_image(sv, names, base, prob)
+    importance_buf = _shap_importance_image(sv, names)
+
+    return waterfall_buf, importance_buf, table_md, summary
+
+
+with gr.Blocks(title="Customer Churn Prediction") as demo:
+    gr.Markdown("# 📊 Customer Crunch — Churn Intelligence Platform")
+    gr.Markdown(
+        "Predict churn, get **SHAP explanations**, chat with the **Advisor Agent**, "
+        "or run the **MLOps Agent** for drift monitoring and self-healing retrain."
+    )
+
+    advisor_agent = None
+    mlops_agent = None
+    if PIPELINE_LOAD_ERROR is None and PIPELINE is not None:
+        from agent.advisor import ChurnAdvisorAgent
+        from agent.mlops_agent import MLOpsAgent
+
+        advisor_agent = ChurnAdvisorAgent(model_path=MODEL_PATH)
+        mlops_agent = MLOpsAgent(model_path=MODEL_PATH)
+
+    # ------------------------------------------------------------------
+    # Shared customer input block (reused across Predict and SHAP tabs)
+    # ------------------------------------------------------------------
+    def _customer_input_components(prefix: str):
+        """Return a flat list of (component, key_name) for a customer form."""
+        with gr.Row():
+            tenure = gr.Slider(0, 10, value=5, step=1, label="Tenure (Years)")
+            estimated_salary = gr.Number(value=100000, label="Estimated Salary ($)")
+        with gr.Row():
+            credit_score = gr.Slider(350, 850, value=600, step=1, label="Credit Score")
+            age = gr.Slider(18, 92, value=40, step=1, label="Age (Years)")
+        with gr.Row():
+            geography = gr.Dropdown(
+                choices=["France", "Germany", "Spain"], value="Germany", label="Geography"
+            )
+            gender = gr.Dropdown(choices=["Male", "Female"], value="Female", label="Gender")
+        with gr.Row():
+            balance = gr.Number(value=75000.0, label="Balance ($)")
+            num_products = gr.Slider(1, 4, value=2, step=1, label="Num of Products")
+        with gr.Row():
+            has_credit_card = gr.Radio(choices=["Yes", "No"], value="No", label="Has Credit Card")
+            is_active_member = gr.Radio(choices=["Yes", "No"], value="No", label="Is Active Member")
+        return tenure, estimated_salary, credit_score, age, geography, gender, \
+               balance, num_products, has_credit_card, is_active_member
+
+    with gr.Tabs():
+
+        # ==================================================================
+        # TAB 1 — PREDICT
+        # ==================================================================
+        with gr.Tab("Predict"):
+            gr.Markdown("Enter customer attributes to get a churn risk estimate.")
+
+            with gr.Row():
+                status_out = gr.Textbox(label="Churn Prediction Status", interactive=False)
+                prob_out = gr.Textbox(label="Churn Probability", interactive=False)
+            details_out = gr.Textbox(label="Notes / Errors", value="", interactive=False)
+
+            gr.Markdown("---")
+            gr.Markdown("## Customer Attributes")
+
+            (p_tenure, p_salary, p_credit, p_age, p_geo, p_gender,
+             p_balance, p_products, p_card, p_active) = _customer_input_components("p")
+
+            gr.Markdown("## Optional UI-only placeholders")
+            with gr.Row():
+                monthly_charges = gr.Number(value=100.0, label="Monthly Charges")
+                total_charges = gr.Number(value=1000.0, label="Total Charges")
+            with gr.Row():
+                contract_type = gr.Dropdown(
+                    choices=["Month-to-month", "One year", "Two year"],
+                    value="Month-to-month", label="Contract Type",
+                )
+                payment_method = gr.Dropdown(
+                    choices=["Electronic check", "Mailed check", "Bank transfer", "Credit card"],
+                    value="Electronic check", label="Payment Method",
+                )
+            with gr.Row():
+                paperless_billing = gr.Dropdown(choices=["Yes", "No"], value="Yes", label="Paperless Billing")
+                internet_service = gr.Dropdown(
+                    choices=["DSL", "Fiber optic", "No"], value="Fiber optic", label="Internet Service"
+                )
+            with gr.Row():
+                tech_support = gr.Dropdown(choices=["Yes", "No"], value="No", label="Tech Support")
+                online_backup = gr.Dropdown(choices=["Yes", "No"], value="No", label="Online Backup")
+            with gr.Row():
+                device_protection = gr.Dropdown(choices=["Yes", "No"], value="No", label="Device Protection")
+                streaming_tv = gr.Dropdown(choices=["Yes", "No"], value="No", label="Streaming TV")
+            streaming_movies = gr.Dropdown(choices=["Yes", "No"], value="No", label="Streaming Movies")
+
+            run_btn = gr.Button("Predict", variant="primary")
+            run_btn.click(
+                fn=predict_customer_churn,
+                inputs=[
+                    p_tenure, monthly_charges, contract_type, payment_method,
+                    paperless_billing, total_charges, internet_service, tech_support,
+                    online_backup, device_protection, streaming_tv, streaming_movies,
+                    p_gender, p_geo, p_credit, p_age, p_balance, p_products,
+                    p_card, p_active, p_salary,
+                ],
+                outputs=[status_out, prob_out, details_out],
+            )
+
+        # ==================================================================
+        # TAB 2 — SHAP EXPLAINABILITY
+        # ==================================================================
+        with gr.Tab("SHAP Explainability"):
+            gr.Markdown(
+                "## 🧠 SHAP Feature Attribution\n"
+                "Live SHAP values computed from the XGBoost model for any customer profile. "
+                "Red bars push toward churn; green bars push away. "
+                "All values are calculated on-the-fly — nothing is hardcoded."
+            )
+
+            if PIPELINE_LOAD_ERROR is not None:
+                gr.Markdown(f"⚠️ Model unavailable: {PIPELINE_LOAD_ERROR}")
+            else:
+                gr.Markdown("### Customer Profile")
+                (s_tenure, s_salary, s_credit, s_age, s_geo, s_gender,
+                 s_balance, s_products, s_card, s_active) = _customer_input_components("s")
+
+                shap_btn = gr.Button("Generate SHAP Explanation", variant="primary")
+
+                with gr.Row():
+                    shap_waterfall = gr.Image(label="Signed Impact (red = toward churn, green = away)", type="pil")
+                    shap_importance = gr.Image(label="Feature Importance (|SHAP|)", type="pil")
+
+                shap_table = gr.Markdown(label="Impact Table")
+                shap_summary = gr.Markdown(label="Plain-language Summary")
+
+                shap_btn.click(
+                    fn=explain_customer_shap,
+                    inputs=[
+                        s_gender, s_geo, s_credit, s_age,
+                        s_balance, s_products, s_card, s_active, s_salary, s_tenure,
+                    ],
+                    outputs=[shap_waterfall, shap_importance, shap_table, shap_summary],
+                )
+
+        # ==================================================================
+        # TAB 3 — ADVISOR AGENT
+        # ==================================================================
+        with gr.Tab("Advisor Agent"):
+            # Show LLM availability status clearly
+            hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
+            hf_model = os.environ.get("HF_LLM_MODEL")
+            if hf_token and hf_model:
+                gr.Markdown(
+                    f"🟢 **LLM mode active** — using `{hf_model}` via HuggingFace Inference API.  "
+                    "Open-ended questions will be answered by the language model."
+                )
+            else:
+                gr.Markdown(
+                    "🟡 **Rule-based mode** — LLM enhancement is off.  "
+                    "Set `HF_TOKEN` and `HF_LLM_MODEL` environment variables to enable it.  \n"
+                    "Supported commands: `predict`, `predict age=52 geography=Germany`, `tips`, `help`."
+                )
+
+            if advisor_agent is None:
+                gr.Markdown(f"⚠️ Advisor unavailable: {PIPELINE_LOAD_ERROR}")
+            else:
+                def advisor_chat(message, history):
+                    return advisor_agent.reply(message, history)
+
+                gr.ChatInterface(
+                    fn=advisor_chat,
+                    examples=[
+                        "help",
+                        "predict",
+                        "predict age=55 tenure=1 is_active=no credit=480 geography=Spain",
+                        "tips",
+                    ],
+                    title="Churn Advisor Agent",
+                )
+
+        # ==================================================================
+        # TAB 4 — MLOPS AGENT
+        # ==================================================================
+        with gr.Tab("MLOps Agent"):
+            gr.Markdown(
+                "Monitor **data drift** (KS test) and trigger **self-healing retrain** "
+                "when feature distributions shift."
+            )
+            if mlops_agent is None:
+                gr.Markdown(f"⚠️ MLOps agent unavailable: {PIPELINE_LOAD_ERROR}")
+            else:
+                with gr.Row():
+                    drift_threshold = gr.Slider(
+                        1, 5, value=1, step=1, label="Drift features to trigger retrain"
+                    )
+                    alpha = gr.Slider(
+                        0.01, 0.2, value=0.05, step=0.01, label="Significance (alpha)"
+                    )
+                simulate_drift = gr.Checkbox(
+                    label="Simulate drift (shift Age +10 for demo)", value=False
+                )
+                dry_run = gr.Checkbox(
+                    label="Dry run (report only, no retrain)", value=True
+                )
+                mlops_out = gr.Markdown(label="MLOps report")
+
+                with gr.Row():
+                    scan_btn = gr.Button("Run drift scan", variant="secondary")
+                    cycle_btn = gr.Button("Run full MLOps cycle", variant="primary")
+
+                def _scan_only(threshold, a, sim, dry):
+                    report = mlops_agent.run_drift_scan(alpha=a, simulate_drift=sim)
+                    heal = mlops_agent.run_self_heal(
+                        report, drift_threshold=int(threshold), dry_run=True
+                    )
+                    return (
+                        mlops_agent.format_drift_report(report)
+                        + f"\n\n**Dry-run self-heal:** would_retrain={heal.get('would_retrain')}"
+                    )
+
+                def _full_cycle(threshold, a, sim, dry):
+                    return mlops_agent.run_full_cycle(
+                        drift_threshold=int(threshold),
+                        alpha=a,
+                        simulate_drift=sim,
+                        dry_run=dry,
+                    )
+
+                scan_btn.click(
+                    _scan_only,
+                    inputs=[drift_threshold, alpha, simulate_drift, dry_run],
+                    outputs=mlops_out,
+                )
+                cycle_btn.click(
+                    _full_cycle,
+                    inputs=[drift_threshold, alpha, simulate_drift, dry_run],
+                    outputs=mlops_out,
+                )
+
+
+if __name__ == "__main__":
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("PORT", "7860")),
+        root_path=os.getenv("SPACE_URL_PATH", ""),
+        show_error=True,
+    )
+
