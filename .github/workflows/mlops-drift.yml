@@ -2,12 +2,13 @@ name: MLOps Drift Check
 
 on:
   schedule:
-    - cron: "0 6 * * 1"
+    - cron: "0 6 * * 1"   # every Monday at 06:00 UTC
   workflow_dispatch:
 
 jobs:
   drift-check:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -17,28 +18,30 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas scipy scikit-learn xgboost joblib
+          pip install pandas scipy scikit-learn xgboost joblib numpy
 
       - name: Run drift monitor
         run: |
           python - <<'PY'
-          import os
-          import sys
+          import os, sys
 
-          root = os.path.join("customer crunch")
-          sys.path.insert(0, root)
-          os.chdir(root)
+          pkg_root = os.path.join(os.getcwd(), "customer_crunch")
+          sys.path.insert(0, pkg_root)
 
           from agent.mlops_agent import MLOpsAgent
 
-          model = "saved_models/churn_pipeline.joblib"
+          model = os.path.join(pkg_root, "saved_models", "churn_pipeline.joblib")
           if not os.path.exists(model):
-              print("No model artifact; skipping drift check.")
+              print("No model artifact found — skipping drift check.")
               raise SystemExit(0)
 
           agent = MLOpsAgent(model_path=model)
           report = agent.run_drift_scan(simulate_drift=False)
           print(agent.format_drift_report(report))
+
           if report.get("drift_features"):
-              print("::warning::Data drift detected:", report["drift_features"])
+              drifted = ", ".join(report["drift_features"])
+              print(f"::warning::Data drift detected in features: {drifted}")
+          else:
+              print("✅ No drift detected — distributions stable.")
           PY

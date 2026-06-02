@@ -17,7 +17,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install flake8
         run: |
@@ -25,4 +25,4 @@ jobs:
           pip install flake8
 
       - name: Run flake8
-        run: flake8 "customer crunch"
+        run: flake8 customer_crunch --max-line-length=120 --extend-ignore=E203,W503

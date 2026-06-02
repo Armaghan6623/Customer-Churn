@@ -230,37 +230,8 @@ def compute_business_metrics(clv: float, offer_cost: float):
         return None, None, f"Error computing business metrics: {ex}"
 
 
-def _validate_and_build_df(payload: dict) -> pd.DataFrame:
-    df = pd.DataFrame([payload])
-
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required input fields: {missing}")
-
-    # Lightweight boundary guardrails
-    age = float(df["Age"].iloc[0])
-    credit_score = float(df["CreditScore"].iloc[0])
-    if not (0 <= age <= 120):
-        raise ValueError(f"Age must be between 0 and 120. Got: {age}")
-    if not (0 <= credit_score <= 850):
-        raise ValueError(f"CreditScore must be between 0 and 850. Got: {credit_score}")
-
-    return df
-
 
 def predict_customer_churn(
-    tenure: float,
-    monthly_charges: float,  # UI placeholder
-    contract_type: str,  # UI placeholder
-    payment_method: str,  # UI placeholder
-    paperless_billing: str,  # UI placeholder
-    total_charges: float,  # UI placeholder
-    internet_service: str,  # UI placeholder
-    tech_support: str,  # UI placeholder
-    online_backup: str,  # UI placeholder
-    device_protection: str,  # UI placeholder
-    streaming_tv: str,  # UI placeholder
-    streaming_movies: str,  # UI placeholder
     gender: str,
     geography: str,
     credit_score: float,
@@ -270,40 +241,43 @@ def predict_customer_churn(
     has_credit_card: str,
     is_active_member: str,
     estimated_salary: float,
+    tenure: float,
 ):
-    """Predict churn risk for a single customer."""
-
+    """Predict churn risk using the business-calibrated threshold."""
     if PIPELINE_LOAD_ERROR is not None or PIPELINE is None:
-        return (
-            "Model failed to load.",
-            "0.00%",
-            f"{PIPELINE_LOAD_ERROR}",
-        )
+        return "Model failed to load.", "0.00%", "", f"{PIPELINE_LOAD_ERROR}"
 
     payload = {
-        "CreditScore": float(credit_score),
-        "Geography": str(geography),
-        "Gender": str(gender),
-        "Age": float(age),
-        "Tenure": float(tenure),
-        "Balance": float(balance),
-        "NumOfProducts": int(num_products),
-        "HasCrCard": 1 if has_credit_card == "Yes" else 0,
-        "IsActiveMember": 1 if is_active_member == "Yes" else 0,
-        "EstimatedSalary": float(estimated_salary),
+        "CreditScore":      float(credit_score),
+        "Geography":        str(geography),
+        "Gender":           str(gender),
+        "Age":              float(age),
+        "Tenure":           float(tenure),
+        "Balance":          float(balance),
+        "NumOfProducts":    int(num_products),
+        "HasCrCard":        1 if has_credit_card == "Yes" else 0,
+        "IsActiveMember":   1 if is_active_member == "Yes" else 0,
+        "EstimatedSalary":  float(estimated_salary),
     }
 
-    df = _validate_and_build_df(payload)
+    try:
+        from classification.predict import predict_single_customer
+        result = predict_single_customer(payload, model_path=MODEL_PATH)
+        prob      = result["churn_probability"]
+        risk_tier = result["risk_tier"]
+        opt_t     = result["optimal_threshold"]
+        b_pred    = result["business_prediction"]
+        status    = result["status"]
 
-    # Handle both new dict artifact format {"pipeline": ..., "config": ...} and legacy raw pipeline
-    _pipeline = PIPELINE["pipeline"] if isinstance(PIPELINE, dict) else PIPELINE
-
-    probability = float(_pipeline.predict_proba(df)[0][1])  # churn prob (class 1)
-    prediction = int(_pipeline.predict(df)[0])
-
-    status = "High Risk" if prediction == 1 else "Low Risk"
-    prob_str = f"{probability * 100:.2f}%"
-    return (status, prob_str, "")
+        prob_str  = f"{prob * 100:.2f}%"
+        note      = (
+            f"Risk tier: {risk_tier} | "
+            f"Business threshold: {opt_t:.2f} | "
+            f"Business decision: {'Intervene' if b_pred else 'Monitor'}"
+        )
+        return status, prob_str, risk_tier, note
+    except Exception as ex:
+        return "Error", "0.00%", "", str(ex)
 
 
 def explain_customer_shap(
@@ -411,56 +385,32 @@ with gr.Blocks(title="Customer Churn Prediction") as demo:
         # TAB 1 — PREDICT
         # ==================================================================
         with gr.Tab("Predict"):
-            gr.Markdown("Enter customer attributes to get a churn risk estimate.")
+            gr.Markdown(
+                "Enter customer attributes to get a churn risk score. "
+                "Prediction uses the **business-calibrated threshold** (optimal profit point) "
+                "rather than a fixed 0.5 cut-off."
+            )
 
             with gr.Row():
-                status_out = gr.Textbox(label="Churn Prediction Status", interactive=False)
-                prob_out = gr.Textbox(label="Churn Probability", interactive=False)
-            details_out = gr.Textbox(label="Notes / Errors", value="", interactive=False)
+                status_out   = gr.Textbox(label="Churn Status",       interactive=False)
+                prob_out     = gr.Textbox(label="Churn Probability",   interactive=False)
+            with gr.Row():
+                tier_out     = gr.Textbox(label="Risk Tier",           interactive=False)
+                details_out  = gr.Textbox(label="Business Decision",   interactive=False)
 
             gr.Markdown("---")
             gr.Markdown("## Customer Attributes")
-
             (p_tenure, p_salary, p_credit, p_age, p_geo, p_gender,
              p_balance, p_products, p_card, p_active) = _customer_input_components("p")
-
-            gr.Markdown("## Optional UI-only placeholders")
-            with gr.Row():
-                monthly_charges = gr.Number(value=100.0, label="Monthly Charges")
-                total_charges = gr.Number(value=1000.0, label="Total Charges")
-            with gr.Row():
-                contract_type = gr.Dropdown(
-                    choices=["Month-to-month", "One year", "Two year"],
-                    value="Month-to-month", label="Contract Type",
-                )
-                payment_method = gr.Dropdown(
-                    choices=["Electronic check", "Mailed check", "Bank transfer", "Credit card"],
-                    value="Electronic check", label="Payment Method",
-                )
-            with gr.Row():
-                paperless_billing = gr.Dropdown(choices=["Yes", "No"], value="Yes", label="Paperless Billing")
-                internet_service = gr.Dropdown(
-                    choices=["DSL", "Fiber optic", "No"], value="Fiber optic", label="Internet Service"
-                )
-            with gr.Row():
-                tech_support = gr.Dropdown(choices=["Yes", "No"], value="No", label="Tech Support")
-                online_backup = gr.Dropdown(choices=["Yes", "No"], value="No", label="Online Backup")
-            with gr.Row():
-                device_protection = gr.Dropdown(choices=["Yes", "No"], value="No", label="Device Protection")
-                streaming_tv = gr.Dropdown(choices=["Yes", "No"], value="No", label="Streaming TV")
-            streaming_movies = gr.Dropdown(choices=["Yes", "No"], value="No", label="Streaming Movies")
 
             run_btn = gr.Button("Predict", variant="primary")
             run_btn.click(
                 fn=predict_customer_churn,
                 inputs=[
-                    p_tenure, monthly_charges, contract_type, payment_method,
-                    paperless_billing, total_charges, internet_service, tech_support,
-                    online_backup, device_protection, streaming_tv, streaming_movies,
-                    p_gender, p_geo, p_credit, p_age, p_balance, p_products,
-                    p_card, p_active, p_salary,
+                    p_gender, p_geo, p_credit, p_age,
+                    p_balance, p_products, p_card, p_active, p_salary, p_tenure,
                 ],
-                outputs=[status_out, prob_out, details_out],
+                outputs=[status_out, prob_out, tier_out, details_out],
             )
 
         # ==================================================================
@@ -614,12 +564,14 @@ with gr.Blocks(title="Customer Churn Prediction") as demo:
                 def _scan_only(threshold, a, sim, dry):
                     report = mlops_agent.run_drift_scan(alpha=a, simulate_drift=sim)
                     heal = mlops_agent.run_self_heal(
-                        report, drift_threshold=int(threshold), dry_run=True
+                        report, drift_threshold=int(threshold), dry_run=dry
                     )
-                    return (
-                        mlops_agent.format_drift_report(report)
-                        + f"\n\n**Dry-run self-heal:** would_retrain={heal.get('would_retrain')}"
+                    suffix = (
+                        f"\n\n**Dry-run self-heal:** would_retrain={heal.get('would_retrain')}"
+                        if dry else
+                        f"\n\n**Self-heal status:** `{heal.get('status')}`"
                     )
+                    return mlops_agent.format_drift_report(report) + suffix
 
                 def _full_cycle(threshold, a, sim, dry):
                     return mlops_agent.run_full_cycle(

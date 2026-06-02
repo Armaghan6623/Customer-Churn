@@ -1,7 +1,7 @@
 # Minimal dependencies for Hugging Face Spaces (Python 3.11+)
 pandas==2.2.1
 numpy==1.26.4
-scikit-learn==1.8.0
+scikit-learn==1.4.2
 xgboost==2.0.3
 imbalanced-learn==0.12.3
 scipy>=1.12.0
