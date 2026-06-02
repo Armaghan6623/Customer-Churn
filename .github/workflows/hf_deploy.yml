@@ -9,53 +9,99 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
-      - name: Build Docker image (sanity check)
-        run: docker build -t hf-space:latest .
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: Restart Space (rebuild with latest repo)
+      - name: Install huggingface_hub
+        run: pip install --quiet "huggingface_hub>=0.26.0"
+
+      - name: Deploy to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_SPACE_DEPLOY_TOKEN }}
-          SPACE_ID: ${{ vars.HF_SPACE_ID }}
-          SPACE_ID_SECRET: ${{ secrets.HF_SPACE_ID }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
         run: |
           python - <<'PY'
-          import os
-          import sys
-          from urllib.error import HTTPError
-          from urllib.parse import quote
-          from urllib.request import Request, urlopen
+          import os, sys
+          from pathlib import Path
+          from huggingface_hub import HfApi, upload_folder
 
-          token = os.environ.get("HF_TOKEN")
-          space_id = (os.environ.get("SPACE_ID") or os.environ.get("SPACE_ID_SECRET") or "").strip()
+          token    = os.environ.get("HF_TOKEN", "").strip()
+          space_id = os.environ.get("HF_SPACE_ID", "MuhammadArmaghan/customer-churn").strip()
 
           if not token:
-              print("Missing secret HF_SPACE_DEPLOY_TOKEN", file=sys.stderr)
-              sys.exit(1)
-          if not space_id:
-              print(
-                  "Missing HF Space id. Set repository variable HF_SPACE_ID "
-                  "or secret HF_SPACE_ID (e.g. your-username/customer-churn).",
-                  file=sys.stderr,
-              )
+              print("ERROR: HF_SPACE_DEPLOY_TOKEN secret is not set.", file=sys.stderr)
               sys.exit(1)
 
-          encoded = quote(space_id, safe="/")
-          url = f"https://huggingface.co/api/spaces/{encoded}/restart"
-          req = Request(
-              url,
-              method="POST",
-              headers={"Authorization": f"Bearer {token}"},
+          repo_root = Path(".")
+          crunch    = repo_root / "customer_crunch"
+
+          # ── Build staging bundle ──────────────────────────────────────────
+          import shutil, tempfile
+          staging = Path(tempfile.mkdtemp(prefix="hf-deploy-"))
+
+          # Top-level files
+          for name in ("Dockerfile", "README.md", ".dockerignore"):
+              src = repo_root / name
+              if src.exists():
+                  shutil.copy2(src, staging / name)
+
+          # Package modules
+          dst_crunch = staging / "customer_crunch"
+          for module in ("ui", "agent", "aiops", "classification", "forecasting"):
+              src_mod = crunch / module
+              if src_mod.is_dir():
+                  shutil.copytree(src_mod, dst_crunch / module)
+
+          init = crunch / "__init__.py"
+          if init.exists():
+              dst_crunch.mkdir(exist_ok=True)
+              shutil.copy2(init, dst_crunch / "__init__.py")
+
+          req = crunch / "requirements-hf.txt"
+          if req.exists():
+              shutil.copy2(req, dst_crunch / "requirements-hf.txt")
+
+          # Saved models
+          src_models = crunch / "saved_models"
+          dst_models = dst_crunch / "saved_models"
+          dst_models.mkdir(parents=True, exist_ok=True)
+          for f in src_models.iterdir():
+              shutil.copy2(f, dst_models / f.name)
+
+          # Reference data (for drift monitoring)
+          data_src = crunch / "data"
+          if data_src.is_dir():
+              shutil.copytree(data_src, dst_crunch / "data")
+
+          # Strip __pycache__
+          for p in staging.rglob("__pycache__"):
+              shutil.rmtree(p)
+
+          # ── Upload ────────────────────────────────────────────────────────
+          api = HfApi(token=token)
+          who = api.whoami()
+          print(f"Authenticated as: {who.get('name', who)}")
+
+          api.create_repo(repo_id=space_id, repo_type="space",
+                          space_sdk="docker", exist_ok=True)
+
+          upload_folder(
+              folder_path=str(staging),
+              repo_id=space_id,
+              repo_type="space",
+              token=token,
+              commit_message="ci: deploy Customer Crunch — SHAP UI, advisor agent, MLOps agent",
+              delete_patterns=["*"],
           )
 
-          try:
-              with urlopen(req, timeout=60) as resp:
-                  print(f"Space restart triggered for {space_id}: HTTP {resp.status}")
-          except HTTPError as e:
-              body = e.read().decode("utf-8", errors="replace")
-              print(f"Restart failed: HTTP {e.code} {body}", file=sys.stderr)
-              sys.exit(1)
+          print(f"Deployed to: https://huggingface.co/spaces/{space_id}")
           PY
