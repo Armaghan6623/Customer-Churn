@@ -16,16 +16,34 @@ if _AGENT_ROOT not in sys.path:
 from classification.dataset_config import DatasetConfig, KAGGLE_BANK_CHURN
 
 
-def _resolve_path(*parts: str) -> str:
-    candidates = [
-        os.path.join(_AGENT_ROOT, *parts),
-        os.path.join(os.getcwd(), "customer_crunch", *parts),
-        os.path.join(os.getcwd(), "customer crunch", *parts),
+def _resolve_data_path(*parts: str) -> str:
+    """Resolve the reference dataset path across common project layouts.
+
+    Tries the new canonical filename first (customer_churn_dataset.csv),
+    then falls back to the legacy Kaggle filename for local dev environments.
+    """
+    canonical_names = [
+        "customer_churn_dataset.csv",
+        "Churn_Modelling kaggel.csv",
     ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return candidates[0]
+    base_dirs = [
+        os.path.join(_AGENT_ROOT, "data"),
+        os.path.join(_AGENT_ROOT, "data", "raw"),
+        os.path.join(os.getcwd(), "customer_crunch", "data"),
+        os.path.join(os.getcwd(), "customer_crunch", "data", "raw"),
+        os.path.join(os.getcwd(), "data"),
+        os.path.join(os.getcwd(), "data", "raw"),
+        "/app/customer_crunch/data",
+        "/app/customer_crunch/data/raw",
+        "/app/data",
+    ]
+    for base in base_dirs:
+        for name in canonical_names:
+            p = os.path.join(base, name)
+            if os.path.exists(p):
+                return p
+    # fallback — canonical path used in the Docker image
+    return os.path.join(_AGENT_ROOT, "data", "customer_churn_dataset.csv")
 
 
 def _load_config_from_artifact(model_path: str) -> DatasetConfig:
@@ -55,9 +73,7 @@ class MLOpsAgent:
         self.model_path = model_path
         # Load config from artifact if not explicitly provided
         self._config: DatasetConfig = config or _load_config_from_artifact(model_path)
-        self.reference_data_path = reference_data_path or _resolve_path(
-            "data", "raw", "Churn_Modelling kaggel.csv"
-        )
+        self.reference_data_path = reference_data_path or _resolve_data_path()
         self._log: list[str] = []
 
     @property

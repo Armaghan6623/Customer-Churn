@@ -29,12 +29,32 @@ class ModelAuditor:
     def __init__(
         self,
         model_path: str = "saved_models/churn_pipeline.joblib",
-        data_path: str = "data/raw/Churn_Modelling kaggel.csv",
+        data_path: str = None,
         clv: float = 200.0,
         offer_cost: float = 20.0,
     ):
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"❌ Model not found at {model_path}. Run train.py first.")
+
+        # Resolve data path — try canonical name first, then legacy name
+        if data_path is None:
+            for candidate in [
+                os.path.join("customer_crunch", "data", "customer_churn_dataset.csv"),
+                os.path.join("data", "customer_churn_dataset.csv"),
+                "/app/customer_crunch/data/customer_churn_dataset.csv",
+                "/app/data/customer_churn_dataset.csv",
+                os.path.join("data", "raw", "Churn_Modelling kaggel.csv"),
+                os.path.join("customer_crunch", "data", "raw", "Churn_Modelling kaggel.csv"),
+            ]:
+                if os.path.exists(candidate):
+                    data_path = candidate
+                    break
+            if data_path is None:
+                raise FileNotFoundError(
+                    "Reference dataset not found. Expected "
+                    "customer_crunch/data/customer_churn_dataset.csv"
+                )
+
         if not os.path.exists(data_path):
             raise FileNotFoundError(f"❌ Raw data not found at {data_path}.")
 

@@ -180,12 +180,16 @@ def compute_business_metrics(clv: float, offer_cost: float):
     if PIPELINE is None:
         return None, None, f"Model not loaded: {PIPELINE_LOAD_ERROR}"
 
-    # Locate the reference dataset
+    # Locate the reference dataset — try canonical name first
     data_candidates = [
         os.path.join(_PKG_ROOT, "data", "customer_churn_dataset.csv"),
-        os.path.join(_PKG_ROOT, "data", "raw", "Churn_Modelling kaggel.csv"),
+        os.path.join(_PKG_ROOT, "data", "raw", "customer_churn_dataset.csv"),
         os.path.join(os.getcwd(), "customer_crunch", "data", "customer_churn_dataset.csv"),
-        os.path.join(os.getcwd(), "saved_models", "..", "data", "customer_churn_dataset.csv"),
+        "/app/customer_crunch/data/customer_churn_dataset.csv",
+        "/app/data/customer_churn_dataset.csv",
+        # legacy fallback
+        os.path.join(_PKG_ROOT, "data", "raw", "Churn_Modelling kaggel.csv"),
+        os.path.join(os.getcwd(), "customer_crunch", "data", "raw", "Churn_Modelling kaggel.csv"),
     ]
     data_path = next((p for p in data_candidates if os.path.exists(p)), None)
     if data_path is None:

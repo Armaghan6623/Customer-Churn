@@ -431,7 +431,14 @@ def train_customer_churn_model(
 
 
 if __name__ == "__main__":
-    _DATA = "data/raw/Churn_Modelling kaggel.csv"
+    # Try canonical filename first, then legacy
+    for _DATA in [
+        "customer_crunch/data/customer_churn_dataset.csv",
+        "data/customer_churn_dataset.csv",
+        "data/raw/Churn_Modelling kaggel.csv",
+    ]:
+        if os.path.exists(_DATA):
+            break
     _SAVE = "saved_models"
 
     if os.path.exists(_DATA):
@@ -447,4 +454,4 @@ if __name__ == "__main__":
             offer_cost=20.0,
         )
     else:
-        print(f"❌  Data file not found: {_DATA}")
+        print(f"❌  Data file not found. Expected customer_crunch/data/customer_churn_dataset.csv")

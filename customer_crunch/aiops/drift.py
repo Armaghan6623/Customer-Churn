@@ -93,11 +93,29 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.
 class DataDriftMonitor:
     def __init__(
         self,
-        reference_data_path: str = "Churn_Modelling kaggel.csv",
+        reference_data_path: str = None,
         numeric_features: list = None,
     ):
+        # Resolve data path if not explicitly provided
+        if reference_data_path is None:
+            for candidate in [
+                os.path.join(os.path.dirname(__file__), "..", "data", "customer_churn_dataset.csv"),
+                os.path.join(os.getcwd(), "customer_crunch", "data", "customer_churn_dataset.csv"),
+                "/app/customer_crunch/data/customer_churn_dataset.csv",
+                "/app/data/customer_churn_dataset.csv",
+                "customer_crunch/data/customer_churn_dataset.csv",
+                "data/customer_churn_dataset.csv",
+                # legacy
+                "Churn_Modelling kaggel.csv",
+                "data/raw/Churn_Modelling kaggel.csv",
+            ]:
+                if os.path.exists(candidate):
+                    reference_data_path = candidate
+                    break
+            if reference_data_path is None:
+                reference_data_path = "customer_crunch/data/customer_churn_dataset.csv"
+
         self.reference_data_path = reference_data_path
-        # When None, features are inferred from the reference data at runtime
         self._numeric_features = numeric_features
 
     def load_reference_data(self):
@@ -170,24 +188,19 @@ class DataDriftMonitor:
         return drift_detected_global, drift_report
 
 if __name__ == "__main__":
-    # Smoke test to simulate different system monitoring conditions
-    monitor = DataDriftMonitor()
-    
-    # Condition 1: Simulate normal incoming user traffic (No drift)
+    monitor = DataDriftMonitor()  # auto-resolves data path
+
     print("🧪 TEST CASE 1: Simulating Normal Production Incoming Traffic...")
     try:
-        raw_df = pd.read_csv("Churn_Modelling kaggel.csv")
-        # Sample a random slice to act as current incoming traffic
+        raw_df = pd.read_csv(monitor.reference_data_path)
         normal_traffic = raw_df.sample(n=1000, random_state=42)
         monitor.analyze_drift(normal_traffic)
     except Exception as e:
         print(f"Test 1 Failed: {str(e)}")
-        
-    # Condition 2: Simulate an out-of-bounds demographic drift (e.g., age or balance shift)
+
     print("\n🧪 TEST CASE 2: Simulating Macroeconomic Shift (Drifted Age Demographic)...")
     try:
         drifted_traffic = raw_df.sample(n=1000, random_state=101).copy()
-        # Simulate a sudden market change where the bank's average user profile ages by 8 years
         drifted_traffic['Age'] = drifted_traffic['Age'] + 8
         monitor.analyze_drift(drifted_traffic)
     except Exception as e:
