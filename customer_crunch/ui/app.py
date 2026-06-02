@@ -9,6 +9,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import shap
+from PIL import Image as PILImage
 
 # Ensure package imports (classification, agent, aiops) resolve.
 _PKG_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -160,6 +161,69 @@ def _shap_importance_image(sv, names):
     plt.close(fig)
     buf.seek(0)
     return PILImage.open(buf)
+
+
+# ---------------------------------------------------------------------------
+# Business metrics helpers
+# ---------------------------------------------------------------------------
+
+def compute_business_metrics(clv: float, offer_cost: float):
+    """Run profit curve analysis on the loaded model using the training dataset."""
+    try:
+        from classification.business_metrics import (
+            cost_benefit_matrix, expected_maximum_profit,
+            roi_of_retention, format_business_report, plot_profit_curve,
+        )
+    except ImportError as e:
+        return None, None, f"business_metrics module not available: {e}"
+
+    if PIPELINE is None:
+        return None, None, f"Model not loaded: {PIPELINE_LOAD_ERROR}"
+
+    # Locate the reference dataset
+    data_candidates = [
+        os.path.join(_PKG_ROOT, "data", "customer_churn_dataset.csv"),
+        os.path.join(_PKG_ROOT, "data", "raw", "Churn_Modelling kaggel.csv"),
+        os.path.join(os.getcwd(), "customer_crunch", "data", "customer_churn_dataset.csv"),
+        os.path.join(os.getcwd(), "saved_models", "..", "data", "customer_churn_dataset.csv"),
+    ]
+    data_path = next((p for p in data_candidates if os.path.exists(p)), None)
+    if data_path is None:
+        return None, None, "Reference dataset not found. Cannot compute profit metrics."
+
+    try:
+        df = pd.read_csv(data_path)
+        pipeline = PIPELINE["pipeline"] if isinstance(PIPELINE, dict) else PIPELINE
+
+        target = "Exited" if "Exited" in df.columns else "Churn"
+        drop_cols = ["CustomerId", "Surname", "RowNumber", "customerID"]
+        X = df.drop(columns=drop_cols + [target], errors="ignore")
+        y = df[target].values
+
+        y_prob = pipeline.predict_proba(X)[:, 1]
+
+        cb         = cost_benefit_matrix(clv=float(clv), offer_cost=float(offer_cost))
+        emp_result = expected_maximum_profit(y, y_prob, cb=cb)
+        roi_result = roi_of_retention(y, y_prob, emp_result["optimal_threshold"], cb=cb)
+
+        report_md = format_business_report(emp_result, roi_result)
+
+        # Profit curve image
+        fig = plot_profit_curve(
+            emp_result["curve_df"],
+            opt_threshold=emp_result["optimal_threshold"],
+            emp=emp_result["emp"],
+        )
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        profit_img = PILImage.open(buf)
+
+        return profit_img, report_md, ""
+
+    except Exception as ex:
+        return None, None, f"Error computing business metrics: {ex}"
 
 
 def _validate_and_build_df(payload: dict) -> pd.DataFrame:
@@ -432,7 +496,53 @@ with gr.Blocks(title="Customer Churn Prediction") as demo:
                 )
 
         # ==================================================================
-        # TAB 3 — ADVISOR AGENT
+        # TAB 3 — BUSINESS METRICS
+        # ==================================================================
+        with gr.Tab("Business Metrics"):
+            gr.Markdown(
+                "## 💰 Business-Oriented Evaluation\n"
+                "Addresses the research gap: *'Limited use of business-oriented metrics'* "
+                "(Systematic Review, 2025). Converts model predictions into profit curves, "
+                "Expected Maximum Profit (EMP), and Retention ROI — going beyond accuracy/F1.\n\n"
+                "Adjust the cost assumptions below and click **Compute** to run the analysis."
+            )
+
+            if PIPELINE_LOAD_ERROR is not None:
+                gr.Markdown(f"⚠️ Model unavailable: {PIPELINE_LOAD_ERROR}")
+            else:
+                with gr.Row():
+                    bm_clv = gr.Number(
+                        value=200.0,
+                        label="Customer Lifetime Value — CLV ($)",
+                        info="Revenue saved when a churner is successfully retained",
+                    )
+                    bm_offer = gr.Number(
+                        value=20.0,
+                        label="Retention Offer Cost ($)",
+                        info="Cost of sending one retention offer (per contacted customer)",
+                    )
+
+                bm_btn = gr.Button("Compute Business Metrics", variant="primary")
+
+                bm_profit_img = gr.Image(
+                    label="Profit Curve — net profit at every classification threshold",
+                    type="pil",
+                )
+                bm_report = gr.Markdown(label="Business Evaluation Report")
+                bm_error  = gr.Textbox(label="Errors", interactive=False, visible=False)
+
+                def _run_bm(clv, offer):
+                    img, report, err = compute_business_metrics(clv, offer)
+                    return img, report or "", gr.update(value=err, visible=bool(err))
+
+                bm_btn.click(
+                    fn=_run_bm,
+                    inputs=[bm_clv, bm_offer],
+                    outputs=[bm_profit_img, bm_report, bm_error],
+                )
+
+        # ==================================================================
+        # TAB 4 — ADVISOR AGENT
         # ==================================================================
         with gr.Tab("Advisor Agent"):
             # Show LLM availability status clearly
@@ -468,7 +578,7 @@ with gr.Blocks(title="Customer Churn Prediction") as demo:
                 )
 
         # ==================================================================
-        # TAB 4 — MLOPS AGENT
+        # TAB 5 — MLOPS AGENT
         # ==================================================================
         with gr.Tab("MLOps Agent"):
             gr.Markdown(
