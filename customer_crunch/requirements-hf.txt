@@ -1,0 +1,12 @@
+# Minimal dependencies for Hugging Face Spaces (Python 3.11+)
+pandas==2.2.1
+numpy==1.26.4
+scikit-learn==1.8.0
+xgboost==2.0.3
+scipy>=1.12.0
+joblib
+requests>=2.31.0
+
+gradio==5.12.0
+starlette>=0.40.0,<0.46.0
+huggingface_hub>=0.26.0
