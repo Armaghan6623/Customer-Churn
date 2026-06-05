@@ -139,7 +139,9 @@ def _shap_waterfall_image(sv, names, base, prob):
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
     buf.seek(0)
-    return PILImage.open(buf)
+    img = PILImage.open(buf)
+    img.load()  # Force load image data into memory
+    return img
 
 
 def _shap_importance_image(sv, names):
@@ -160,7 +162,9 @@ def _shap_importance_image(sv, names):
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
     buf.seek(0)
-    return PILImage.open(buf)
+    img = PILImage.open(buf)
+    img.load()  # Force load image data into memory
+    return img
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +232,7 @@ def compute_business_metrics(clv: float, offer_cost: float):
         plt.close(fig)
         buf.seek(0)
         profit_img = PILImage.open(buf)
+        profit_img.load()  # Force load image data into memory
 
         return profit_img, report_md, ""
 
