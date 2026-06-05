@@ -38,12 +38,20 @@ def _resolve_data_path() -> str:
     """Find the reference dataset across known project layouts."""
     candidates = [
         os.path.join(os.path.dirname(__file__), "..", "data", "customer_churn_dataset.csv"),
+        os.path.join(os.path.dirname(__file__), "..", "data", "raw", "customer_churn_dataset.csv"),
         os.path.join(os.getcwd(), "customer_crunch", "data", "customer_churn_dataset.csv"),
+        os.path.join(os.getcwd(), "customer_crunch", "data", "raw", "customer_churn_dataset.csv"),
         "/app/customer_crunch/data/customer_churn_dataset.csv",
+        "/app/customer_crunch/data/raw/customer_churn_dataset.csv",
         "/app/data/customer_churn_dataset.csv",
+        "/app/data/raw/customer_churn_dataset.csv",
         "customer_crunch/data/customer_churn_dataset.csv",
+        "customer_crunch/data/raw/customer_churn_dataset.csv",
         "data/customer_churn_dataset.csv",
+        "data/raw/customer_churn_dataset.csv",
         # legacy filenames
+        "/app/customer_crunch/data/raw/Churn_Modelling kaggel.csv",
+        "/app/data/raw/Churn_Modelling kaggel.csv",
         "data/raw/Churn_Modelling kaggel.csv",
         "Churn_Modelling kaggel.csv",
     ]

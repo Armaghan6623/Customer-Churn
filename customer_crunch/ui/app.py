@@ -185,9 +185,14 @@ def compute_business_metrics(clv: float, offer_cost: float):
         os.path.join(_PKG_ROOT, "data", "customer_churn_dataset.csv"),
         os.path.join(_PKG_ROOT, "data", "raw", "customer_churn_dataset.csv"),
         os.path.join(os.getcwd(), "customer_crunch", "data", "customer_churn_dataset.csv"),
+        os.path.join(os.getcwd(), "customer_crunch", "data", "raw", "customer_churn_dataset.csv"),
         "/app/customer_crunch/data/customer_churn_dataset.csv",
+        "/app/customer_crunch/data/raw/customer_churn_dataset.csv",
         "/app/data/customer_churn_dataset.csv",
+        "/app/data/raw/customer_churn_dataset.csv",
         # legacy fallback
+        "/app/customer_crunch/data/raw/Churn_Modelling kaggel.csv",
+        "/app/data/raw/Churn_Modelling kaggel.csv",
         os.path.join(_PKG_ROOT, "data", "raw", "Churn_Modelling kaggel.csv"),
         os.path.join(os.getcwd(), "customer_crunch", "data", "raw", "Churn_Modelling kaggel.csv"),
     ]

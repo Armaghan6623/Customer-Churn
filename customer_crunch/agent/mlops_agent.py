@@ -36,6 +36,7 @@ def _resolve_data_path(*parts: str) -> str:
         "/app/customer_crunch/data",
         "/app/customer_crunch/data/raw",
         "/app/data",
+        "/app/data/raw",
     ]
     for base in base_dirs:
         for name in canonical_names:
