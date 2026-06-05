@@ -604,5 +604,7 @@ if __name__ == "__main__":
         server_port=int(os.getenv("PORT", "7860")),
         root_path=os.getenv("SPACE_URL_PATH", ""),
         show_error=True,
+        share=False,  # HF Spaces handles sharing; set to False to avoid extra tunnel
+        debug=False,  # Disable debug mode in production
     )
 
